@@ -60,7 +60,7 @@ api_path="JSSResource/advancedcomputersearches/id/${group_id}"
 echo "Getting a list of devices in Jamf Pro search ID ${group_id}"
 URL="${jamf_url}/${api_path}"
 
-responseXML=$( curl	--user "${api_user}:${api_pass}" --silent --show-error --write-out "\n%{http_code}" --header "Accept: text/xml" "${URL}" )
+responseXML=$( curl -sku "${api_user}:${api_pass}" --write-out "\n%{http_code}" --header "Accept: text/xml" "${URL}" )
 
 HTTP_Status=$( echo "$responseXML" | tail -1)
 responseXML=$( echo "$responseXML" | sed \$d )
@@ -102,7 +102,7 @@ for serial in  "${serialnumbers[@]}"; do
   #build the api path for machine specific info using the serial.
   api_device_path="JSSResource/computers/serialnumber/$serial"
   #going to make a bunch of variables based on the the same chunk of data from the above api call.
-  data=`curl ${security} --user "${api_user}:${api_pass}" --silent --show-error --header "Accept: text/xml" "$jamf_url/$api_device_path/subset/general"`
+  data=`curl -sku "${api_user}:${api_pass}" -H "Accept: text/xml" "$jamf_url/$api_device_path/subset/general"`
   devicename=$(echo $data | awk -F '<name>|</name>' '{print $2}')
   echo "Device Name: \"${devicename}\""
   
@@ -111,7 +111,7 @@ for serial in  "${serialnumbers[@]}"; do
   # here we actually do the api call and then pass it off to the style sheet to
   # extract the data, then we'll append it to the report output file...
   echo "Requesting application usage logs for ${serial}..."
-  xmlResponse=$( curl ${security} --user "${api_user}:${api_pass}" --silent --show-error --header "Accept: text/xml" "$jamf_url/$api_path" )
+  xmlResponse=$( curl -sku "${api_user}:${api_pass}" -H "Accept: text/xml" "$jamf_url/$api_path" )
   # echo "API Response: $xmlResponse"
 
 	#######################################
