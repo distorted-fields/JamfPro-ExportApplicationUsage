@@ -1,152 +1,136 @@
-#!/bin/bash
-
-# This script uses the api to gather all serial numbers of a computer search and then gathers application usage data for that Mac.
-# each entry contains User data so, multiple lines will exist for each serial. one for each application.
-# exported report is stored in a coma sperated spreadsheet.
-# Please see end of script for terms
-
-# ##################################################################
-# Environment Specific Variables 
-# ##################################################################
-
-# API Info 
+#!/bin/zsh
+#
+#
+#
+#           Created by A.Hodgson                     
+#            Date: 2023-03-07
+#            Purpose: This script uses the api to gather all serial numbers or those from an adv computer search and then gathers application usage data.
+#			
+#			****IMPORTANT*****
+#				This script requires jq to be installed for data parsing, download here - https://stedolan.github.io/jq/download/ or install with homebrew "brew install jq"
+#
+############################################################
+# User Variables 
+#############################################################
 api_user=""
 api_pass=""
-jamf_url="" #include port number if on prem
-
-# A Jamf Pro Advanced Search that contains the clients for which you want a report
-group_id=""
-
-#select a start date YYYY-MM-DD 
-start_date=""
-#todays date
-end_date=$(date +"%Y-%m-%d")
-
-# App name or vendor in question, leave blank to collect all apps
-app_name=""
-
-csv_export="/tmp/app_usage_export.csv"
-# ##################################################################
-# End parameter definition. Code below...
-# ##################################################################
-
-# ##################################################################
-# Main...
-# ##################################################################
-  
+jamf_url="" # include port number if on prem but with no trailing slash
+group_id="" # A Jamf Pro Advanced Search that contains the clients for which you want a report, leave blank to report on all computers
+start_date="" # select a start date YYYY-MM-DD 
+app_name="" # App name or vendor in question, leave blank to collect all apps
+#############################################################
+end_date=$(date +"%Y-%m-%d") # todays date
+csv_export="/tmp/app_usage_export.csv" 
+headers="Date,Device Name,Serial Number,App Name,Minutes in Forground" #if you change the order, also change line 123
 #######################################
-# Create an XSLT file at /tmp/stylesheet.xslt
-#######################################
- 
-cat << EOF > /tmp/stylesheet.xslt
-<?xml version="1.0" encoding="UTF-8"?>
-<xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
-<xsl:output method="text"/>
-<xsl:template match="/">
-    <xsl:for-each select="advanced_computer_search/computers/computer">
-        <xsl:value-of select="Serial_Number"/>
-        <xsl:text> </xsl:text>
-    </xsl:for-each>
-</xsl:template>
-</xsl:stylesheet>
-EOF
-
-#######################################
-
-#build the api path to the smartgroup
-api_path="JSSResource/advancedcomputersearches/id/${group_id}"
-  
-#grab the serialnumbers from the adv search
-echo "Getting a list of devices in Jamf Pro search ID ${group_id}"
-URL="${jamf_url}/${api_path}"
-
-responseXML=$( curl -sku "${api_user}:${api_pass}" --write-out "\n%{http_code}" --header "Accept: text/xml" "${URL}" )
-
-HTTP_Status=$( echo "$responseXML" | tail -1)
-responseXML=$( echo "$responseXML" | sed \$d )
-echo "HTTP_Status : $HTTP_Status"
-
-/bin/echo -n "HTTP Status Code: $HTTP_Status : "
-if [[ $HTTP_Status = "200" ]]; then
-  echo '[OK]'
-elif [[ $HTTP_Status = "400" ]]; then
-  echo "[error] Invalid API request"
-  exit 1
+# build the api path to the advanced search, or all computers
+if [ -z "$group_id" ]; then
+	api_path="JSSResource/computers/subset/basic"
 else
-  echo "[error] API could not return the group information. "
-  echo "$responseXML"
-  exit 1
+	api_path="JSSResource/advancedcomputersearches/id/${group_id}"
 fi
-
-# extract 
-serialnumbers=(`echo "$responseXML" | xsltproc /tmp/stylesheet.xslt -`)
- 
-#display all the members of the array if needed
-# echo "Serial number list : ${serialnumbers[@]}"
-
+#############################################################
+# create a fresh export file
 if [ -e $csv_export ]; then
-  rm -f $csv_export
+	rm -f $csv_export
 fi
 #touch the temp export file
 touch $csv_export
- 
 #write the header values of each column
-echo "Device Name,Serial Number,App Name,Minutes in Forground" > $csv_export
- 
-# ##################################################################
+echo "$headers" > $csv_export
+#############################################################
+# Functions
+#############################################################
+function apiResponse(){
+    HTTP_Status=$1
+    if [ $HTTP_Status -eq 200 ] || [ $HTTP_Status -eq 201 ]; then echo "Success."
+    elif [ $HTTP_Status -eq 400 ]; then echo "400 Failure - Bad request. Verify the syntax of the request specifically the XML body."
+    elif [ $HTTP_Status -eq 401 ]; then echo "401 Failure - Authentication failed. Verify the credentials being used for the request."
+    elif [ $HTTP_Status -eq 403 ]; then echo "403 Failure - Invalid permissions. Verify the account being used has the proper permissions for the object/resource you are trying to access."
+    elif [ $HTTP_Status -eq 404 ]; then echo "404 Failure - Object/resource not found. Verify the URL path is correct."
+    elif [ $HTTP_Status -eq 409 ]; then echo "409 Failure - Conflict, check XML data"
+    elif [ $HTTP_Status -eq 500 ]; then echo "500 Failure - Internal server error. Retry the request or contact Jamf support if the error is persistent."
+    fi
+    echo ""
+    echo ""
+}
 
-#loop through once for each serial number in the array, pull the app usage via API, parse, and output to the .csv
+function generateAuthToken(){
+	echo ""
+	echo "Generating authorization token..."
+	# generate an auth token
+	auth_response=$(curl --write-out "%{http_code}" -sku "$api_user":"$api_pass" "${jamf_url}/api/v1/auth/token" --header 'Accept: application/json' -X POST)
+	responseStatus=${auth_response: -3}
+	auth_response=$(echo  ${auth_response/%???/})
 
-for serial in  "${serialnumbers[@]}"; do
-  echo "Requesting details for device serial number : ${serial}"     
-  #build the api path for machine specific info using the serial.
-  api_device_path="JSSResource/computers/serialnumber/$serial"
-  #going to make a bunch of variables based on the the same chunk of data from the above api call.
-  data=`curl -sku "${api_user}:${api_pass}" -H "Accept: text/xml" "$jamf_url/$api_device_path/subset/general"`
-  devicename=$(echo $data | awk -F '<name>|</name>' '{print $2}')
-  echo "Device Name: \"${devicename}\""
-  
-  #build the api path for Application usage History using the passed serial and the passed date ranges.
-  api_path="JSSResource/computerapplicationusage/serialnumber/$serial/${start_date}_${end_date}"
-  # here we actually do the api call and then pass it off to the style sheet to
-  # extract the data, then we'll append it to the report output file...
-  echo "Requesting application usage logs for ${serial}..."
-  xmlResponse=$( curl -sku "${api_user}:${api_pass}" -H "Accept: text/xml" "$jamf_url/$api_path" )
-  # echo "API Response: $xmlResponse"
+	if [ $responseStatus -eq 200 ]; then
+		# parse authToken for token, omit expiration
+		token=$(echo "$auth_response" | plutil -extract token raw -)
+		echo "Success."
+		echo ""
+		echo ""
+	else
+		echo "Authentication failed. Verify the credentials being used for the request."
+		exit 1
+	fi
+}
+#############################################################
+# MAIN
+#############################################################
+generateAuthToken
 
-	#######################################
-	# Create an XSLT output template file at /tmp/stylesheet.xslt
-	# This XSL spits out device info, using bash replace string operator "//" to remove any commas. because they will break the CSV.
-	#######################################
-cat << EOF > /tmp/stylesheet.xslt
-<?xml version="1.0" encoding="UTF-8"?>
-<xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
-	<xsl:output method="text"/>
-	<xsl:template match="/">
-		<xsl:for-each select="computer_application_usage/usage/apps/app">
-			<xsl:text>$devicename</xsl:text>
-			<xsl:text>,</xsl:text>
-			<xsl:text>$serial</xsl:text>
-			<xsl:text>,</xsl:text>
-			<xsl:value-of select="name"/>
-			<xsl:text>,</xsl:text>
-			<xsl:value-of select="foreground"/>
-      <xsl:text>&#xa;</xsl:text>
-		</xsl:for-each>
-	</xsl:template>
-</xsl:stylesheet>
-EOF
-######
-  usageData=$( echo "$xmlResponse" | xsltproc /tmp/stylesheet.xslt - )
-  if [[ "$usageData" == *"$app_name"* ]]; then
-    while IFS= read -r line; do 
-        if [[ "$line" == *"$app_name"* ]]; then
-          echo "$line" >> $csv_export
-        fi
-    done <<< "$usageData"
-  fi
+echo "Getting a list of devices in Jamf Pro..."
+api_response=$(curl --write-out "%{http_code}" -sk -H "Authorization: Bearer $token" -H "Accept: application/json" "${jamf_url}/${api_path}" -X GET)
+responseStatus=${api_response: -3}
+# test that we got a successful api response or output error
+if [ $responseStatus -eq 200 ] || [ $responseStatus -eq 201 ]; then 
+	# trim the api response code off the response
+	api_response=$( echo ${api_response/%???/})
+	# get all target serial numbers
+	if [ -z "$group_id" ]; then
+		serialnumbers=$(echo "$api_response" | jq -r '.computers[].serial_number')
+	else
+		serialnumbers=$(echo "$api_response" | jq -r '.advanced_computer_search.computers[].Serial_Number')
+	fi
 
-done
+	# loop through once for each serial number in the array, pull the app usage via API, parse, and output to the .csv
+	while IFS= read -r serial; do
+	
+		if [ -z "$group_id" ]; then
+			devicename=$(echo $api_response | jq '.computers[] | select(.serial_number == "'$serial'") | .name')
+		else
+			devicename=$(echo $api_response | jq '.advanced_computer_search.computers[] | select(.Serial_Number == "'$serial'") | .name')
+		fi
 
-# ##################################################################
+		echo "Device Info: ${devicename} - ${serial}"
+		echo "Requesting application usage logs for ${serial}..."  
+		# Get the app usage for current device in the date range
+		app_usage_response=$(curl --write-out "%{http_code}" -sk -H "Authorization: Bearer $token" -H "Accept: application/json" "$jamf_url/JSSResource/computerapplicationusage/serialnumber/$serial/${start_date}_${end_date}" -X GET)
+		responseStatus=${app_usage_response: -3}
+		# check for successful api response
+		if [ $responseStatus -eq 200 ] || [ $responseStatus -eq 201 ]; then 
+			app_usage_response=$( echo ${app_usage_response/%???/})
+			dates=$(echo $app_usage_response | jq -r '.computer_application_usage[].date')
+			# parse the date outputs and gather the apps and time in foregroun
+			while IFS= read -r date; do
+				
+				app_usage=$(echo $app_usage_response | jq -r '.computer_application_usage[] | select(.date == "'"$date"'") | .apps[] | {name, foreground} | join(",")')
+				# append only target app data
+				while IFS= read -r current_app; do
+					if [[ "$current_app" == *"$app_name"* ]]; then
+						app=$(echo "$current_app" | cut -d "," -f1)
+						foreground=$(echo "$current_app" | cut -d ',' -f2)
+						echo "$date,$devicename,$serial,$app,$foreground" >> $csv_export
+					fi
+				done <<< "$app_usage"
+			done <<< "$dates"
+		else
+			apiResponse "$responseStatus"
+		fi
+		echo "" # empty line for readability in terminal
+	done <<< "$serialnumbers"
+else
+	apiResponse "$responseStatus"
+fi
+#############################################################
 exit 0
