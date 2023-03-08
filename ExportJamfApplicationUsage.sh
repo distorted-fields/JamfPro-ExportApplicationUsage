@@ -6,8 +6,8 @@
 #            Date: 2023-03-07
 #            Purpose: This script uses the api to gather all serial numbers or those from an adv computer search and then gathers application usage data.
 #			
-#			****IMPORTANT*****
-#				This script requires jq to be installed for data parsing, download here - https://stedolan.github.io/jq/download/ or install with homebrew "brew install jq"
+#	     ****IMPORTANT*****
+#	     This script requires jq to be installed for data parsing, download here - https://stedolan.github.io/jq/download/ or install with homebrew "brew install jq"
 #
 ############################################################
 # User Variables 
